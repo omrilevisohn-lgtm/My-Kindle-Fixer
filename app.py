@@ -1,65 +1,71 @@
 import streamlit as st
+from ebooklib import epub
 import os
 import subprocess
 import re
+import shutil
 
-# פונקציה פשוטה וחזקה להיפוך עברית בתוך טקסט HTML
+# פונקציית היפוך חזקה
 def reverse_hebrew_in_html(html_content):
-    if not html_content:
-        return ""
-    
-    # פונקציה פנימית להיפוך מילים בעברית בלבד
-    def reverse_match(match):
-        word = match.group(0)
-        return word[::-1]
-
-    # רגקס שמוצא רצפים של אותיות בעברית (כולל סופיות)
+    if not html_content: return ""
     hebrew_regex = r'[\u0590-\u05FF]+'
-    return re.sub(hebrew_regex, reverse_match, html_content)
+    return re.sub(hebrew_regex, lambda m: m.group(0)[::-1], html_content)
 
 st.set_page_config(page_title="Kindle Fixed", page_icon="📖")
-st.title("📖 ממיר לקינדל - גרסה יציבה")
+st.title("📖 ממיר לקינדל - גרסה סופית")
 
 uploaded_file = st.file_uploader("תעלה קובץ EPUB", type="epub")
 
 if uploaded_file:
-    # שמירת הקובץ המקורי
-    with open("original.epub", "wb") as f:
+    # ניקוי שאריות מהרצה קודמת
+    if os.path.exists('temp_folder'): shutil.rmtree('temp_folder')
+    
+    # שמירת הקובץ עם סיומת ברורה
+    input_path = "input_book.epub"
+    with open(input_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
     
-    st.success("הקובץ הועלה בהצלחה!")
+    # ניסיון לשלוף מטה-דאטה (שם וסופר)
+    try:
+        book = epub.read_epub(input_path)
+        title = book.get_metadata('DC', 'title')[0][0] if book.get_metadata('DC', 'title') else "Unknown"
+        author = book.get_metadata('DC', 'creator')[0][0] if book.get_metadata('DC', 'creator') else "Unknown"
+        st.info(f"**ספר:** {title} | **סופר:** {author}")
+    except:
+        title = "Fixed_Book"
+        st.warning("לא הצלחתי לקרוא את פרטי הספר, אבל נמשיך בהמרה.")
 
     if st.button("המר ל-AZW3"):
-        with st.spinner("מבצע המרה חכמה..."):
-            # שלב 1: פתיחת ה-EPUB לתיקייה זמנית בעזרת Calibre
-            subprocess.run(['ebook-convert', 'original.epub', 'temp_folder/'], capture_output=True)
+        with st.spinner("מבצע המרה... זה לוקח דקה"):
+            # שלב 1: פירוק ה-EPUB לתיקייה
+            os.makedirs('temp_folder', exist_ok=True)
+            subprocess.run(['ebook-convert', input_path, 'temp_folder'], capture_output=True)
             
-            # שלב 2: מעבר על כל קבצי ה-HTML בתיקייה והיפוך העברית
-            for root, dirs, files in os.walk('temp_folder/'):
+            # שלב 2: היפוך עברית בקבצי התוכן
+            for root, dirs, files in os.walk('temp_folder'):
                 for file in files:
                     if file.endswith(('.html', '.xhtml', '.htm')):
                         path = os.path.join(root, file)
                         with open(path, 'r', encoding='utf-8', errors='ignore') as f:
                             content = f.read()
-                        
-                        fixed_content = reverse_hebrew_in_html(content)
-                        
                         with open(path, 'w', encoding='utf-8') as f:
-                            f.write(fixed_content)
+                            f.write(reverse_hebrew_in_html(content))
             
             # שלב 3: אריזה מחדש ל-AZW3
-            output_file = "fixed_book.azw3"
-            result = subprocess.run(['ebook-convert', 'temp_folder/', output_file], capture_output=True, text=True)
+            # הוספת הסיומת .epub לתיקייה כדי ש-Calibre יבין שזה מקור של ספר
+            output_azw3 = "output.azw3"
+            # פקודה שיוצרת את הקובץ מתוך תוכן התיקייה
+            result = subprocess.run(['ebook-convert', 'temp_folder/metadata.opf', output_azw3], capture_output=True, text=True)
             
-            if os.path.exists(output_file):
-                with open(output_file, "rb") as f:
-                    st.success("הספר מוכן להורדה!")
+            if os.path.exists(output_azw3):
+                with open(output_azw3, "rb") as f:
+                    st.success("הצלחנו!")
                     st.download_button(
-                        label="הורד קובץ AZW3",
+                        label="הורד קובץ לקינדל",
                         data=f,
-                        file_name="fixed_book.azw3",
+                        file_name=f"{title}.azw3",
                         mime="application/octet-stream"
                     )
             else:
-                st.error("ההמרה נכשלה. נסה קובץ אחר.")
+                st.error("ההמרה נכשלה.")
                 st.code(result.stderr)
