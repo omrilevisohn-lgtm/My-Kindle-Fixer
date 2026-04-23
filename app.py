@@ -4,11 +4,16 @@ import os
 import re
 import io
 import subprocess
+from ebooklib import epub
 
-# פונקציית היפוך חזקה
-def reverse_hebrew_text(text):
+# פונקציית היפוך חכמה: הופכת אותיות בתוך מילה וגם את סדר המילים
+def reverse_hebrew_logic(text):
     if not text: return text
-    return re.sub(r'[\u0590-\u05FF]+', lambda m: m.group(0)[::-1], text)
+    # היפוך האותיות בכל מילה שיש בה עברית
+    words = text.split()
+    reversed_words = [word[::-1] if any('\u0590' <= char <= '\u05fe' for char in word) else word for word in words]
+    # היפוך סדר המילים במשפט כדי ש"משחק האומנת" יהיה "האומנת משחק" בקוד (ויוצג נכון בקינדל)
+    return " ".join(reversed_words[::-1])
 
 def fix_epub_in_memory(input_bytes):
     in_io = io.BytesIO(input_bytes)
@@ -20,35 +25,54 @@ def fix_epub_in_memory(input_bytes):
                 if item.filename.endswith(('.html', '.xhtml', '.htm', '.ncx', '.opf')):
                     try:
                         text_content = content.decode('utf-8', errors='ignore')
-                        fixed_text = reverse_hebrew_text(text_content)
+                        # שימוש ברגקס כדי למצוא טקסט בין תגים ולטפל רק בו
+                        def replace_func(match):
+                            return reverse_hebrew_logic(match.group(0))
+                        
+                        # הופך טקסט שלא נמצא בתוך תגי <>
+                        fixed_text = re.sub(r'([^<]+)(?=[^>]*<|$)', lambda m: reverse_hebrew_logic(m.group(1)), text_content)
                         outzip.writestr(item.filename, fixed_text.encode('utf-8'))
                     except:
-                        outzip.writestr(item, content)
+                        outzip.writestr(item.filename, content)
                 else:
-                    outzip.writestr(item, content)
+                    outzip.writestr(item.filename, content)
     return out_io.getvalue()
 
 st.set_page_config(page_title="Kindle Hebrew Fixer", page_icon="📖")
-st.title("📖 ממיר לקינדל - AZW3 עברית ישרה")
+st.title("📖 ממיר לקינדל - תיקון סדר מילים")
 
 uploaded_file = st.file_uploader("תעלה קובץ EPUB", type="epub")
 
 if uploaded_file:
-    st.success("הקובץ נקלט!")
+    # שמירה זמנית כדי לחלץ שם וסופר
+    input_bytes = uploaded_file.read()
+    with open("temp_meta.epub", "wb") as f:
+        f.write(input_bytes)
     
+    book_title = "Unknown_Book"
+    book_author = "Unknown_Author"
+    
+    try:
+        book = epub.read_epub("temp_meta.epub")
+        title_meta = book.get_metadata('DC', 'title')
+        if title_meta: book_title = title_meta[0][0]
+        author_meta = book.get_metadata('DC', 'creator')
+        if author_meta: book_author = author_meta[0][0]
+        st.info(f"**מזוהה:** {book_title} - {book_author}")
+    except:
+        st.warning("לא הצלחתי לקרוא מטה-דאטה, שם הקובץ יהיה גנרי.")
+
     if st.button("המר ל-AZW3"):
-        with st.spinner("מתקן עברית וממיר לפורמט קינדל..."):
+        with st.spinner("מתקן סדר מילים וממיר..."):
             try:
-                # שלב 1: תיקון העברית בזיכרון (השיטה היציבה)
-                fixed_epub_bytes = fix_epub_in_memory(uploaded_file.read())
+                # שלב 1: תיקון העברית
+                fixed_epub_bytes = fix_epub_in_memory(input_bytes)
                 
-                # שלב 2: שמירה זמנית לדיסק לצורך המרה
                 with open("temp_fixed.epub", "wb") as f:
                     f.write(fixed_epub_bytes)
                 
-                # שלב 3: המרה ל-AZW3 בעזרת Calibre
-                output_azw3 = "output_book.azw3"
-                # הוספנו דגל שמבטיח כיוון טקסט מימין לשמאל
+                # שלב 2: המרה ל-AZW3
+                output_azw3 = "output.azw3"
                 subprocess.run([
                     'ebook-convert', "temp_fixed.epub", output_azw3,
                     '--language', 'he',
@@ -58,16 +82,16 @@ if uploaded_file:
                 if os.path.exists(output_azw3):
                     with open(output_azw3, "rb") as f:
                         st.balloons()
-                        st.success("הקובץ מוכן בפורמט AZW3!")
+                        # יצירת שם קובץ מותאם
+                        final_filename = f"{book_title} - {book_author}.azw3"
+                        st.success(f"הספר '{book_title}' מוכן!")
                         st.download_button(
-                            label="הורד AZW3 לקינדל",
+                            label="הורד קובץ AZW3",
                             data=f,
-                            file_name="fixed_book.azw3",
+                            file_name=final_filename,
                             mime="application/octet-stream"
                         )
                 else:
-                    st.error("ההמרה ל-AZW3 נכשלה בשרת. נסה להוריד כ-EPUB.")
-                    st.download_button("הורד כ-EPUB מתוקן", fixed_epub_bytes, file_name="fixed.epub")
-                    
+                    st.error("ההמרה נכשלה.")
             except Exception as e:
                 st.error(f"שגיאה: {e}")
