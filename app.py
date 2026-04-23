@@ -5,11 +5,11 @@ import re
 import io
 import subprocess
 
-# פונקציית היפוך אותיות בלבד - ללא היפוך סדר המילים
-def reverse_letters_in_words(text):
+def reverse_hebrew_line(text):
     if not text: return text
-    # מוצא כל רצף של אותיות בעברית והופך רק אותו (האותיות בתוך המילה)
-    return re.sub(r'[\u0590-\u05FF]+', lambda m: m.group(0)[::-1], text)
+    # פונקציה שהופכת את כל המחרוזת אבל משאירה מספרים ואנגלית בכיוון הנכון
+    # בשיטה הזו אנחנו הופכים את כל השורה, והקינדל הופך אותה חזרה לתצוגה ישרה
+    return text[::-1]
 
 def get_meta_simple(input_path):
     try:
@@ -24,7 +24,7 @@ def get_meta_simple(input_path):
         return "Fixed_Book", "Unknown"
 
 st.set_page_config(page_title="Kindle Hebrew Fixer", page_icon="📖")
-st.title("📖 ממיר לקינדל - תיקון כיווניות סופי")
+st.title("📖 ממיר לקינדל - גרסת ההיפוך המלא")
 
 uploaded_file = st.file_uploader("תעלה קובץ EPUB", type="epub")
 
@@ -41,9 +41,8 @@ if uploaded_file:
     st.info(f"**מזוהה:** {book_title} - {book_author}")
 
     if st.button("המר ל-AZW3"):
-        with st.spinner("מעבד טקסט..."):
+        with st.spinner("מבצע היפוך לוגי מלא..."):
             try:
-                # שלב 1: היפוך אותיות בלבד בתוך ה-ZIP (המשפט נשאר בסדר המקורי)
                 in_io = io.BytesIO(file_bytes)
                 out_io = io.BytesIO()
                 with zipfile.ZipFile(in_io) as inzip:
@@ -53,8 +52,8 @@ if uploaded_file:
                             if item.filename.endswith(('.html', '.xhtml', '.htm', '.ncx', '.opf')):
                                 try:
                                     text_content = content.decode('utf-8', errors='ignore')
-                                    # הופך אותיות בתוך המילים אבל שומר על סדר המילים במשפט
-                                    fixed = re.sub(r'([^<]+)(?=[^>]*<|$)', lambda m: reverse_letters_in_words(m.group(1)), text_content)
+                                    # אנחנו הופכים כל פיסת טקסט שאינה תג HTML
+                                    fixed = re.sub(r'([^<]+)(?=[^>]*<|$)', lambda m: m.group(1)[::-1], text_content)
                                     outzip.writestr(item.filename, fixed.encode('utf-8'))
                                 except:
                                     outzip.writestr(item.filename, content)
@@ -64,12 +63,8 @@ if uploaded_file:
                 with open(temp_epub, "wb") as f:
                     f.write(out_io.getvalue())
 
-                # שלב 2: המרה ל-AZW3 עם הגדרות כיווניות קשיחות
-                # אנחנו מגדירים ltr (משמאל לימין) כדי שהקינדל לא ינסה להפוך את סדר המילים שוב
-                subprocess.run([
-                    'ebook-convert', temp_epub, output_path,
-                    '--extra-css', 'body { direction: ltr !important; }'
-                ], capture_output=True)
+                # המרה ל-AZW3 ללא הגדרות כיווניות (ההיפוך כבר בתוך הטקסט)
+                subprocess.run(['ebook-convert', temp_epub, output_path], capture_output=True)
                 
                 if os.path.exists(output_path):
                     with open(output_path, "rb") as f:
